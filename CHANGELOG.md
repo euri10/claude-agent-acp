@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.71.0](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.70.0...v0.71.0) (2026-08-19)
+
+
+### Features
+
+* add ai generated session title ([#984](https://github.com/agentclientprotocol/claude-agent-acp/issues/984)) ([d334766](https://github.com/agentclientprotocol/claude-agent-acp/commit/d334766ef95dd89201979d42252e3d2a5a259cb9))
+
 ## [0.70.0](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.69.0...v0.70.0) (2026-08-17)
 
 
