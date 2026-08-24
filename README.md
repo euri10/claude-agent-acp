@@ -17,6 +17,7 @@ This tool implements an ACP agent by using the official [Claude Agent SDK](https
 - Custom [Slash commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands)
 - Client MCP servers
 - Session-scoped long-running goals through the provider-neutral [goal extension](docs/goal-extension.md)
+- Account-level subscription capacity through the provider-neutral [account limits extension](docs/account-limits-extension.md)
 - Structured errors, recovery, and warnings through the opt-in [session failure extension](docs/session-failure-extension.md)
 - Concrete model and effort defaults through the opt-in [recommended config value extension](docs/recommended-config-values-extension.md)
 - Tool permission presentation, editable choices, and durable effects through the [permission extension](docs/permission-extension.md)

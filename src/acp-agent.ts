@@ -85,6 +85,18 @@ import {
   ThinkingConfig,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
+  ACCOUNT_LIMITS_META_KEY,
+  ACCOUNT_LIMITS_READ_METHOD,
+  ACCOUNT_LIMITS_UPDATED_METHOD,
+  ACCOUNT_LIMITS_VERSION,
+  type AccountLimitsCapability,
+  type AccountLimitsReadRequest,
+  type AccountLimitsSnapshot,
+  mergeClaudeRateLimitEvent,
+  normalizeClaudeAccountLimits,
+  parseAccountLimitsReadRequest,
+} from "./account-limits-extension.js";
+import {
   GOAL_ACTIONS,
   GOAL_CONTROL_METHOD,
   GOAL_EXTENSION_VERSION,
@@ -1906,6 +1918,8 @@ export class ClaudeAcpAgent {
   /** Same, for the "the CLI probe timed out" warning: a wedged CLI stays wedged
    *  and would otherwise warn once per probe, i.e. once per user prompt. */
   private loggedProbeTimeout = false;
+  /** Last account-level snapshot read or observed through any live Session. */
+  private accountLimitsSnapshot: AccountLimitsSnapshot | null = null;
   /** Grace period before a `session/cancel` forces a wedged prompt loop to
    *  return "cancelled". See {@link DEFAULT_FORCE_CANCEL_GRACE_MS}. Mutable so
    *  tests can shrink it. */
@@ -2101,6 +2115,13 @@ export class ClaudeAcpAgent {
           // never a status payload. The state itself travels on
           // `_auth/status_update`; there is nothing for a client to ask for.
           authStatus: authStatusCapability(),
+          [ACCOUNT_LIMITS_META_KEY]: {
+            accountLimits: {
+              version: ACCOUNT_LIMITS_VERSION,
+              readMethod: ACCOUNT_LIMITS_READ_METHOD,
+              updatedMethod: ACCOUNT_LIMITS_UPDATED_METHOD,
+            } satisfies AccountLimitsCapability,
+          },
         },
         promptCapabilities: {
           image: true,
@@ -2149,6 +2170,27 @@ export class ClaudeAcpAgent {
         } satisfies GoalCapability,
       },
     };
+  }
+
+  /** Read account limits through an existing Claude Session without starting one. */
+  async readAccountLimits(_params: AccountLimitsReadRequest): Promise<AccountLimitsSnapshot> {
+    const session = Object.values(this.sessions).find((candidate) => !candidate.queryClosed);
+    if (!session) {
+      throw RequestError.internalError(
+        undefined,
+        "Reading account limits requires a live Claude session",
+      );
+    }
+
+    const response =
+      await session.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET();
+    const snapshot = normalizeClaudeAccountLimits(response);
+    const previous = this.accountLimitsSnapshot;
+    if (snapshot.buckets.length === 0 && previous !== null && previous.buckets.length > 0) {
+      return previous;
+    }
+    this.accountLimitsSnapshot = snapshot;
+    return snapshot;
   }
 
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
@@ -2260,6 +2302,7 @@ export class ClaudeAcpAgent {
       this.setAuthStatus(
         gatewayAuthStatus(gatewayRequestToProviderConfig(this.gatewayAuthRequest)?.baseUrl),
       );
+      this.accountLimitsSnapshot = null;
       return;
     }
     throw new Error("Method not implemented.");
@@ -2586,6 +2629,7 @@ export class ClaudeAcpAgent {
     // Any probe already running read the pre-logout world; the bump makes its
     // answer unpublishable so it cannot resurrect the identity being cleared.
     this.authEpoch += 1;
+    this.accountLimitsSnapshot = null;
     // Learned context windows are per-account state too: 1M-context
     // entitlement is gated per org/tier, and an OAuth re-login is invisible to
     // the env-derived provider cache key, so windows learned under the old
@@ -5940,6 +5984,17 @@ export class ClaudeAcpAgent {
             break;
           }
           case "rate_limit_event": {
+            try {
+              const previous = this.accountLimitsSnapshot ?? { buckets: [] };
+              const snapshot = mergeClaudeRateLimitEvent(previous, message.rate_limit_info);
+              if (snapshot !== previous) {
+                this.accountLimitsSnapshot = snapshot;
+                await this.client.extNotification(ACCOUNT_LIMITS_UPDATED_METHOD, snapshot);
+              }
+            } catch (error) {
+              const kind = error instanceof Error ? error.name : typeof error;
+              this.logger.error(`Failed to publish ACP account-limits update (${kind})`);
+            }
             if (lastAssistantTotalUsage !== null) {
               await sendUpdate({
                 sessionId: message.session_id,
@@ -8517,6 +8572,7 @@ export class ClaudeAcpAgent {
       }
 
       this.providerConfig = config;
+      this.accountLimitsSnapshot = null;
       for (const [sessionId, session] of sessions) {
         if (this.sessions[sessionId] !== session || !session.creationParams) {
           continue;
@@ -10186,6 +10242,11 @@ export function runAcp(logger?: Logger) {
       GOAL_CONTROL_METHOD,
       { parse: parseGoalRequest },
       (ctx) => agent.goal(ctx.params),
+    )
+    .onRequest<AccountLimitsReadRequest, AccountLimitsSnapshot>(
+      ACCOUNT_LIMITS_READ_METHOD,
+      { parse: parseAccountLimitsReadRequest },
+      (ctx) => agent.readAccountLimits(ctx.params),
     )
     .connect(stream);
 
