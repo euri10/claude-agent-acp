@@ -24,6 +24,7 @@ This tool implements an ACP agent by using the official [Claude Agent SDK](https
 - Tool permission presentation, editable choices, and durable effects through the [permission extension](docs/air-extensions.md#permission-presentation)
 - One fact per field in every tool call report, as the [ACP tool call contract](docs/air-extensions.md#tool-call-contract) defines
 - All AIR extensions, capabilities, and `_meta` keys: [AIR extensions](docs/air-extensions.md)
+- Account-level subscription capacity through the provider-neutral [account limits extension](docs/account-limits-extension.md)
 
 Learn more about the [Agent Client Protocol](https://agentclientprotocol.com/).
 
