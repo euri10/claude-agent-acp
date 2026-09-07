@@ -65,6 +65,29 @@ describe("Claude account limits ACP integration", () => {
     expect(usage).toHaveBeenCalledOnce();
   });
 
+  it("logs safe usage response metadata", async () => {
+    const logs: string[] = [];
+    const agent = new ClaudeAcpAgent(mockClient(), {
+      log: (...args) => logs.push(args.join(" ")),
+      error: () => {},
+    });
+    agent.sessions.live = mockSessionState({
+      query: {
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: vi.fn(async () => ({
+          subscription_type: "pro",
+          rate_limits_available: true,
+          rate_limits: null,
+        })),
+      },
+    });
+
+    await agent.readAccountLimits({});
+
+    expect(logs).toEqual([
+      "[account-limits] subscription_type=pro rate_limits_available=true rate_limits=null rate_limit_keys=none",
+    ]);
+  });
+
   it("fails without creating a Session when no live query exists", async () => {
     const agent = new ClaudeAcpAgent(mockClient(), { log: () => {}, error: () => {} });
 
