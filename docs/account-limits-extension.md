@@ -80,3 +80,10 @@ Stream `utilization` is a fraction from 0 through 1: `0.92` becomes `usedPercent
 The structured usage control response already expresses utilization from 0 through 100,
 so `0.92` there remains 0.92 percent. Conversion happens only on incoming stream values;
 sparse events retain previously normalized percentages without converting them again.
+
+The adapter also reads known windows in the SDK's `unifiedWindows` map. These can
+provide five-hour and weekly usage even when top-level utilization is absent.
+Each window uses the same fractional scale; sparse updates preserve existing
+measurements. The event's reached status applies only to its named limit, not to
+every window in the map. Malformed known windows and contradictory duplicate
+measurements reject the update; unknown window names are ignored.

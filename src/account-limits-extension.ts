@@ -171,7 +171,7 @@ export function normalizeClaudeAccountLimits(response: ClaudeUsageLimits): Accou
   return result;
 }
 
-function eventTarget(rateLimitType: SDKRateLimitInfo["rateLimitType"]) {
+function eventTarget(rateLimitType: string | undefined) {
   switch (rateLimitType) {
     case "five_hour":
       return { id: "claude", label: "Claude", duration: 5 * 60 };
@@ -194,10 +194,11 @@ function eventTarget(rateLimitType: SDKRateLimitInfo["rateLimitType"]) {
   }
 }
 
-/** Merge one structured SDK rate-limit event into the last known snapshot. */
-export function mergeClaudeRateLimitEvent(
+function mergeRateLimitWindow(
   snapshot: AccountLimitsSnapshot,
-  info: SDKRateLimitInfo,
+  info: Partial<Pick<SDKRateLimitInfo, "status" | "utilization" | "resetsAt">> & {
+    rateLimitType?: string;
+  },
 ): AccountLimitsSnapshot {
   const target = eventTarget(info.rateLimitType);
   if (!target) return snapshot;
@@ -218,7 +219,8 @@ export function mergeClaudeRateLimitEvent(
     (eventUsedPercent ?? previousWindow?.usedPercent) !== undefined &&
     (info.resetsAt ?? previousWindow?.resetsAt) !== undefined;
   const canUpdateReached =
-    info.status === "rejected" || existing?.reachedType === info.rateLimitType;
+    info.status === "rejected" ||
+    (info.status !== undefined && existing?.reachedType === info.rateLimitType);
   if (!canUpdateWindow && !canUpdateReached) return snapshot;
 
   const buckets = snapshot.buckets.map((bucket) => ({
@@ -254,13 +256,54 @@ export function mergeClaudeRateLimitEvent(
 
   if (info.status === "rejected") {
     bucket.reachedType = info.rateLimitType;
-  } else if (bucket.reachedType === info.rateLimitType) {
+  } else if (info.status !== undefined && bucket.reachedType === info.rateLimitType) {
     delete bucket.reachedType;
   }
 
   const result = { ...snapshot, buckets };
   if (result.defaultBucketId === undefined && buckets.some((item) => item.id === "claude")) {
     result.defaultBucketId = "claude";
+  }
+  return result;
+}
+
+/** Merge SDK stream windows, validating consumed fields before publishing a snapshot. */
+export function mergeClaudeRateLimitEvent(
+  snapshot: AccountLimitsSnapshot,
+  info: SDKRateLimitInfo & { unifiedWindows?: unknown },
+): AccountLimitsSnapshot {
+  let result = mergeRateLimitWindow(snapshot, info);
+  // Present in captured SDK messages but absent from the SDK's current declaration.
+  const windows = info.unifiedWindows;
+  if (windows === undefined) return result;
+  if (windows === null || typeof windows !== "object" || Array.isArray(windows)) {
+    throw new Error("Claude Agent SDK returned invalid account-limit windows");
+  }
+  for (const [rateLimitType, value] of Object.entries(windows)) {
+    const target = eventTarget(rateLimitType);
+    if (!target || target.duration === null) continue;
+    const raw: unknown = value;
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("Claude Agent SDK returned an invalid account-limit window");
+    }
+    const { utilization, resetsAt } = raw as Record<string, unknown>;
+    if (
+      (utilization !== undefined && typeof utilization !== "number") ||
+      (resetsAt !== undefined && typeof resetsAt !== "number")
+    ) {
+      throw new Error("Claude Agent SDK returned an invalid account-limit window");
+    }
+    if (
+      rateLimitType === info.rateLimitType &&
+      ((utilization !== undefined &&
+        info.utilization !== undefined &&
+        utilization !== info.utilization) ||
+        (resetsAt !== undefined && info.resetsAt !== undefined && resetsAt !== info.resetsAt))
+    ) {
+      throw new Error("Claude Agent SDK returned a conflicting account-limit window");
+    }
+    // A window carries measurements, not the status of other limits in this event.
+    result = mergeRateLimitWindow(result, { rateLimitType, utilization, resetsAt });
   }
   return result;
 }

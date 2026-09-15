@@ -7,6 +7,7 @@ import {
 } from "../account-limits-extension.js";
 import { ClaudeAcpAgent, type AcpClient } from "../acp-agent.js";
 import { Pushable } from "../utils.js";
+import { unifiedRateLimit } from "./fixtures/claude-rate-limit.js";
 import {
   mockSessionState,
   successfulResultMessage,
@@ -195,6 +196,62 @@ describe("Claude account limits ACP integration", () => {
       },
     });
     await expect(agent.readAccountLimits({})).resolves.toEqual(notifications[0].params);
+  });
+
+  it("publishes captured unified windows and retains them across an empty pull", async () => {
+    const notifications: { method: string; params: Record<string, unknown> }[] = [];
+    const agent = new ClaudeAcpAgent(mockClient(notifications), { log: () => {}, error: () => {} });
+    const input = new Pushable<any>();
+    // The quota shape is captured; this fixture's placement after result is synthetic
+    // and exercises a late event after prompt completion, as the existing stream test does.
+    async function* messages() {
+      const { value: userMessage } = await input[Symbol.asyncIterator]().next();
+      yield userEcho(userMessage);
+      yield successfulResultMessage();
+      yield {
+        type: "rate_limit_event",
+        rate_limit_info: unifiedRateLimit,
+        uuid: "unified-rate-limit",
+        session_id: "test-session",
+      };
+    }
+    agent.sessions["test-session"] = mockSessionState({
+      input,
+      query: Object.assign(wrapQuery(messages()), {
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: vi.fn(async () => ({
+          subscription_type: null,
+          rate_limits_available: false,
+          rate_limits: null,
+        })),
+      }),
+    });
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "continue" }] });
+    await agent.sessions["test-session"]?.consumer;
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      method: ACCOUNT_LIMITS_UPDATED_METHOD,
+      params: {
+        buckets: [
+          {
+            id: "claude",
+            windows: [
+              { usedPercent: 1, windowDurationMins: 300 },
+              { usedPercent: 36, windowDurationMins: 10080 },
+            ],
+          },
+        ],
+      },
+    });
+    agent.sessions["live-read"] = mockSessionState({
+      query: {
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: vi.fn(async () => ({
+          subscription_type: null,
+          rate_limits_available: false,
+          rate_limits: null,
+        })),
+      },
+    });
+    expect(await agent.readAccountLimits({})).toEqual(notifications[0].params);
   });
 
   it("publishes a complete snapshot after a structured rolling event", async () => {
