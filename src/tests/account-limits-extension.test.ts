@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { unifiedRateLimit } from "./fixtures/claude-rate-limit.js";
 import {
   mergeClaudeRateLimitEvent,
   normalizeClaudeAccountLimits,
@@ -6,6 +7,98 @@ import {
 } from "../account-limits-extension.js";
 
 describe("account limits extension", () => {
+  it("reads both captured unified windows without top-level utilization", () => {
+    const result = mergeClaudeRateLimitEvent({ buckets: [] }, unifiedRateLimit);
+    expect(result.buckets).toEqual([
+      {
+        id: "claude",
+        label: "Claude",
+        windows: [
+          { usedPercent: 1, windowDurationMins: 300, resetsAt: 1788937200 },
+          { usedPercent: 36, windowDurationMins: 10080, resetsAt: 1789005600 },
+        ],
+      },
+    ]);
+    expect(result.defaultBucketId).toBe("claude");
+  });
+
+  it("keeps reached status scoped to the reported window and preserves sparse updates", () => {
+    const snapshot = mergeClaudeRateLimitEvent(
+      { buckets: [] },
+      {
+        ...unifiedRateLimit,
+        status: "rejected",
+        rateLimitType: "seven_day",
+        resetsAt: 1789005600,
+      },
+    );
+    expect(snapshot.buckets[0].reachedType).toBe("seven_day");
+    const updated = mergeClaudeRateLimitEvent(snapshot, {
+      status: "allowed",
+      rateLimitType: "five_hour",
+      unifiedWindows: { five_hour: { utilization: 0.02 } },
+    });
+    expect(updated.buckets[0].reachedType).toBe("seven_day");
+    expect(updated.buckets[0].windows[0]).toEqual({
+      usedPercent: 2,
+      windowDurationMins: 300,
+      resetsAt: 1788937200,
+    });
+    expect(updated.buckets[0].windows[1]).toEqual(snapshot.buckets[0].windows[1]);
+    expect(snapshot.buckets[0].windows[0].usedPercent).toBe(1);
+  });
+
+  it.each(
+    [
+      null,
+      [],
+      1,
+      { five_hour: null },
+      { five_hour: [] },
+      { five_hour: { utilization: "0.1" } },
+      { five_hour: { utilization: 1.1 } },
+      { five_hour: { resetsAt: "123" } },
+      { five_hour: { resetsAt: -1 } },
+    ].map((value) => [value]),
+  )("rejects malformed unified windows %j", (unifiedWindows) => {
+    const snapshot = { buckets: [] };
+    expect(() =>
+      mergeClaudeRateLimitEvent(snapshot, { ...unifiedRateLimit, unifiedWindows }),
+    ).toThrow();
+    expect(snapshot).toEqual({ buckets: [] });
+  });
+
+  it("rejects conflicting duplicate window data", () => {
+    expect(() =>
+      mergeClaudeRateLimitEvent(
+        { buckets: [] },
+        {
+          ...unifiedRateLimit,
+          utilization: 0.9,
+        },
+      ),
+    ).toThrow("conflicting account-limit window");
+    expect(() =>
+      mergeClaudeRateLimitEvent(
+        { buckets: [] },
+        {
+          ...unifiedRateLimit,
+          resetsAt: 1788937201,
+        },
+      ),
+    ).toThrow("conflicting account-limit window");
+  });
+
+  it("ignores unknown window names without inventing a quota", () => {
+    const result = mergeClaudeRateLimitEvent(
+      { buckets: [] },
+      {
+        status: "allowed",
+        unifiedWindows: { future_window: { newField: true } },
+      },
+    );
+    expect(result).toEqual({ buckets: [] });
+  });
   it("normalizes subscription windows, model buckets, and extra usage", () => {
     expect(
       normalizeClaudeAccountLimits({
