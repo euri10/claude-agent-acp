@@ -75,3 +75,8 @@ fallback when Claude's usage endpoint reports that pull-based plan limits are un
 responses still carry structured utilization headers. An event cannot create a window unless it
 contains both utilization and reset time; later sparse events may update an already observed
 window. Rejected events additionally mark the affected bucket as reached.
+
+Stream `utilization` is a fraction from 0 through 1: `0.92` becomes `usedPercent: 92`.
+The structured usage control response already expresses utilization from 0 through 100,
+so `0.92` there remains 0.92 percent. Conversion happens only on incoming stream values;
+sparse events retain previously normalized percentages without converting them again.

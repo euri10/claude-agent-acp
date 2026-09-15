@@ -54,11 +54,11 @@ const WEEKLY_BUCKETS = [
   ["seven_day_sonnet", "Sonnet"],
 ] as const;
 
-function normalizePercentage(value: number): number {
-  if (!Number.isFinite(value) || value < 0 || value > 100) {
+function normalizePercentage(value: number, scale = 1): number {
+  if (!Number.isFinite(value) || value < 0 || value > 100 / scale) {
     throw new Error("Claude Agent SDK returned an invalid account-limit percentage");
   }
-  return value;
+  return value * scale;
 }
 
 function normalizeResetTime(value: string): number {
@@ -202,7 +202,9 @@ export function mergeClaudeRateLimitEvent(
   const target = eventTarget(info.rateLimitType);
   if (!target) return snapshot;
 
-  if (info.utilization !== undefined) normalizePercentage(info.utilization);
+  // Stream utilization is a fraction; usage-control responses already use percentages.
+  const eventUsedPercent =
+    info.utilization === undefined ? undefined : normalizePercentage(info.utilization, 100);
   if (info.resetsAt !== undefined && (!Number.isSafeInteger(info.resetsAt) || info.resetsAt <= 0)) {
     throw new Error("Claude Agent SDK returned an invalid account-limit reset time");
   }
@@ -213,7 +215,7 @@ export function mergeClaudeRateLimitEvent(
   );
   const canUpdateWindow =
     target.duration !== null &&
-    (info.utilization ?? previousWindow?.usedPercent) !== undefined &&
+    (eventUsedPercent ?? previousWindow?.usedPercent) !== undefined &&
     (info.resetsAt ?? previousWindow?.resetsAt) !== undefined;
   const canUpdateReached =
     info.status === "rejected" || existing?.reachedType === info.rateLimitType;
@@ -234,7 +236,7 @@ export function mergeClaudeRateLimitEvent(
 
   if (target.duration !== null && canUpdateWindow) {
     const previous = bucket.windows.find((window) => window.windowDurationMins === target.duration);
-    const usedPercent = info.utilization ?? previous?.usedPercent;
+    const usedPercent = eventUsedPercent ?? previous?.usedPercent;
     const resetsAt = info.resetsAt ?? previous?.resetsAt;
     if (usedPercent !== undefined && resetsAt !== undefined) {
       const updated = {

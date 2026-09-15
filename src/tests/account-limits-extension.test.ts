@@ -129,7 +129,7 @@ describe("account limits extension", () => {
       mergeClaudeRateLimitEvent(snapshot, {
         status: "rejected",
         rateLimitType: "five_hour",
-        utilization: 100,
+        utilization: 1,
         resetsAt: 4102358500,
       }),
     ).toEqual({
@@ -156,7 +156,7 @@ describe("account limits extension", () => {
         {
           status: "allowed",
           rateLimitType: "five_hour",
-          utilization: 22,
+          utilization: 0.22,
           resetsAt: 4102358500,
         },
       ),
@@ -181,6 +181,60 @@ describe("account limits extension", () => {
         resetsAt: 4102358500,
       }),
     ).toBe(snapshot);
+  });
+
+  // Captured SDK metadata and ACP output: proxy/sessions/
+  // 3282c3df-a569-4d46-9b35-358157805c69/log.jsonl, 2026-09-09T03:20:01.059Z,
+  // under ~/.local/state/acp-llm-adapter. SDK 0.9 was emitted as usedPercent 0.9.
+  it.each([0, 0.009, 0.9, 0.92, 1])(
+    "converts stream utilization %s exactly once",
+    (utilization) => {
+      const snapshot = mergeClaudeRateLimitEvent(
+        { buckets: [] },
+        {
+          status: "allowed_warning",
+          rateLimitType: "five_hour",
+          utilization,
+          resetsAt: 1788937200,
+        },
+      );
+      expect(snapshot.buckets[0].windows[0].usedPercent).toBeCloseTo(utilization * 100);
+      const updated = mergeClaudeRateLimitEvent(snapshot, {
+        status: "allowed",
+        rateLimitType: "five_hour",
+        resetsAt: 1788937300,
+      });
+      expect(updated.buckets[0].windows[0].usedPercent).toBe(
+        snapshot.buckets[0].windows[0].usedPercent,
+      );
+      expect(snapshot.buckets[0].windows[0].resetsAt).toBe(1788937200);
+    },
+  );
+
+  it.each([-0.1, 1.01, 90, NaN, Infinity, null, "0.9"])(
+    "rejects invalid stream utilization %s",
+    (utilization) => {
+      expect(() =>
+        mergeClaudeRateLimitEvent(
+          { buckets: [] },
+          {
+            status: "allowed",
+            rateLimitType: "five_hour",
+            utilization: utilization as number,
+            resetsAt: 1788937200,
+          },
+        ),
+      ).toThrow("invalid account-limit percentage");
+    },
+  );
+
+  it("preserves sub-one percentages from the structured usage response", () => {
+    const snapshot = normalizeClaudeAccountLimits({
+      subscription_type: "pro",
+      rate_limits_available: true,
+      rate_limits: { five_hour: { utilization: 0.9, resets_at: "2099-12-31T00:00:00.000Z" } },
+    });
+    expect(snapshot.buckets[0].windows[0].usedPercent).toBe(0.9);
   });
 
   it("requires the read request to be an empty object", () => {
