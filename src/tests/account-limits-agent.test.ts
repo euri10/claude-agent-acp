@@ -145,7 +145,7 @@ describe("Claude account limits ACP integration", () => {
         rate_limit_info: {
           status: "allowed_warning",
           rateLimitType: "five_hour",
-          utilization: 85,
+          utilization: 0.85,
           resetsAt: 4102358500,
         },
         uuid: "rate-limit-event",
@@ -215,7 +215,7 @@ describe("Claude account limits ACP integration", () => {
         rate_limit_info: {
           status: "allowed_warning",
           rateLimitType: "five_hour",
-          utilization: 85,
+          utilization: 0.85,
           resetsAt: 4102358500,
         },
         uuid: "rate-limit-event",
