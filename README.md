@@ -18,6 +18,7 @@ This tool implements an ACP agent by using the official [Claude Agent SDK](https
 - Client MCP servers
 - Session-scoped long-running goals through the provider-neutral [goal extension](docs/goal-extension.md)
 - Structured errors, recovery, and warnings through the opt-in [session failure extension](docs/session-failure-extension.md)
+- Native busy/idle status, including scheduled wakeups, through the opt-in [Session activity extension](session_activity_protocol.md)
 - Concrete model and effort defaults through the opt-in [recommended config value extension](docs/recommended-config-values-extension.md)
 - Tool permission presentation, editable choices, and durable effects through the [permission extension](docs/permission-extension.md)
 

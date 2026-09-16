@@ -2336,6 +2336,7 @@ export class ClaudeAcpAgent {
           claudeCode: {
             promptQueueing: true,
           },
+          "io.github.euri10.louiselm.sessionActivity": { version: 1 },
           // Capability marker for the `authStatus` extension: presence means
           // "this agent pushes its identity" and the object stays empty — it is
           // never a status payload. The state itself travels on
@@ -4468,6 +4469,33 @@ export class ClaudeAcpAgent {
                 break;
               }
               case "session_state_changed": {
+                const capability =
+                  this.clientCapabilities?._meta?.["io.github.euri10.louiselm.sessionActivity"];
+                if (
+                  capability &&
+                  typeof capability === "object" &&
+                  "version" in capability &&
+                  capability.version === 1 &&
+                  message.session_id === params.sessionId &&
+                  (message.state === "running" ||
+                    message.state === "idle" ||
+                    message.state === "requires_action")
+                ) {
+                  // Publish native activity even when no client prompt is pending.
+                  // A result completes a prompt; only this signal establishes idle.
+                  await sendUpdate({
+                    sessionId: params.sessionId,
+                    update: {
+                      sessionUpdate: "session_info_update",
+                      _meta: {
+                        "io.github.euri10.louiselm.sessionActivity": {
+                          version: 1,
+                          state: message.state,
+                        },
+                      },
+                    },
+                  });
+                }
                 const previousState = session.lastSessionState;
                 session.lastSessionState = message.state;
                 if (
