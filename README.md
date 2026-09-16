@@ -15,6 +15,7 @@ This tool implements an ACP agent by using the official [Claude Agent SDK](https
 - TODO lists
 - Nested subagent transcripts
 - Interactive (and background) terminals
+- Native busy/idle status, including scheduled wakeups, through the opt-in [Session activity extension](session_activity_protocol.md)
 - Custom [Slash commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands)
 - Client MCP servers
 - `/mcp` in the chat: the MCP server status as a list. The adapter runs `/mcp reconnect`, `/mcp enable`, and `/mcp disable` through the SDK control API, because Claude Code refuses them in SDK mode. A reconnect of an ACP server that needs authentication starts MCP OAuth through URL elicitation
