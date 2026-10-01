@@ -102,10 +102,25 @@ beforeAll(async () => {
   for (const profile of profiles) {
     for (const scenario of SCENARIOS) {
       resetIds();
-      runs.set(
-        key(profile.name, scenario.name),
-        await runScenario(ClaudeAcpAgent, profile, scenario),
-      );
+      const recorded = await runScenario(ClaudeAcpAgent, profile, scenario);
+      const initialization = recorded.normalized.find((record) => record.kind === "initialize");
+      if (initialization) {
+        const meta = (
+          initialization.payload as { agentCapabilities: { _meta: Record<string, unknown> } }
+        ).agentCapabilities._meta;
+        // Assert local advertisements, then compare the remaining upstream contract.
+        expect(meta["io.github.euri10.louiselm"]).toEqual({
+          accountLimits: {
+            version: 1,
+            readMethod: "_io.github.euri10.louiselm/account_limits/read",
+            updatedMethod: "_io.github.euri10.louiselm/account_limits/updated",
+          },
+        });
+        expect(meta["io.github.euri10.louiselm.sessionActivity"]).toEqual({ version: 1 });
+        delete meta["io.github.euri10.louiselm"];
+        delete meta["io.github.euri10.louiselm.sessionActivity"];
+      }
+      runs.set(key(profile.name, scenario.name), recorded);
     }
   }
 }, 120_000);
