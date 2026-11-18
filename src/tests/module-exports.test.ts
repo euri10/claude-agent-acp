@@ -7,7 +7,14 @@ describe("module runtime exports", () => {
    */
   it("lib.ts exports the expected names", async () => {
     expect(Object.keys(await import("../lib.js")).sort()).toEqual([
+      "ACCOUNT_LIMITS_META_KEY",
+      "ACCOUNT_LIMITS_READ_METHOD",
+      "ACCOUNT_LIMITS_UPDATED_METHOD",
+      "ACCOUNT_LIMITS_VERSION",
       "AUTH_STATUS_UPDATE_METHOD",
+      "mergeClaudeRateLimitEvent",
+      "normalizeClaudeAccountLimits",
+      "parseAccountLimitsReadRequest",
       "serveAcp",
     ]);
   });

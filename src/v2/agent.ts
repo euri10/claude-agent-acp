@@ -31,6 +31,16 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import packageJson from "../../package.json" with { type: "json" };
 import { messageIdForGrouping } from "../sdk-to-acp.js";
+import {
+  ACCOUNT_LIMITS_META_KEY,
+  ACCOUNT_LIMITS_READ_METHOD,
+  ACCOUNT_LIMITS_UPDATED_METHOD,
+  ACCOUNT_LIMITS_VERSION,
+  parseAccountLimitsReadRequest,
+  type AccountLimitsReadRequest,
+  type AccountLimitsSnapshot,
+} from "../account-limits-extension.js";
+import { ClaudeAccountLimits } from "../account-limits.js";
 import type { Logger } from "../logger.js";
 import { customAgents } from "../session-config-options.js";
 import { claudeCliPath, mcpServersDelivery } from "../claude-cli.js";
@@ -114,8 +124,15 @@ export function v2AgentApp(
       })
       .onNotification(v2.methods.agent.mcp.message, mcp.handleNotification)
       .onRequest(v2.methods.agent.initialize, ({ params }) => agent.initialize(params))
-      .onRequest(v2.methods.agent.auth.login, ({ params }) => agent.auth.login(params))
-      .onRequest(v2.methods.agent.auth.logout, () => agent.auth.logout())
+      .onRequest(v2.methods.agent.auth.login, async ({ params }) => {
+        const result = await agent.auth.login(params);
+        agent.accountLimits.reset();
+        return result;
+      })
+      .onRequest(v2.methods.agent.auth.logout, () => {
+        agent.accountLimits.reset();
+        return agent.auth.logout();
+      })
       .onRequest(v2.methods.agent.auth.status, () => agent.auth.authStatus())
       .onRequest(v2.methods.agent.providers.list, () => agent.auth.listProviders())
       .onRequest(v2.methods.agent.providers.set, ({ params }) => agent.auth.setProvider(params))
@@ -146,11 +163,18 @@ export function v2AgentApp(
       .onNotification(v2.methods.agent.session.cancel, ({ params }) =>
         agent.cancel(params.sessionId),
       )
+      .onRequest<AccountLimitsReadRequest, AccountLimitsSnapshot>(
+        ACCOUNT_LIMITS_READ_METHOD,
+        { parse: parseAccountLimitsReadRequest },
+        () =>
+          agent.sessions.values().next().value?.readAccountLimits() ?? agent.accountLimits.read(),
+      )
   );
 }
 
 class V2Agent implements AgentHandle, SessionConnection {
   readonly sessions = new Map<string, V2Session>();
+  readonly accountLimits: ClaudeAccountLimits;
   /**
    * The sessions whose query ended without `session/close`, with what to tell
    * the client. v2 keeps a session active until it is closed or the
@@ -193,8 +217,14 @@ class V2Agent implements AgentHandle, SessionConnection {
     /** Serves the client's `acp` MCP servers to Claude Code (see `mcp-servers.ts`). */
     private readonly mcp: McpOverAcp,
   ) {
+    this.accountLimits = new ClaudeAccountLimits(logger, (snapshot) =>
+      ctx.notify(ACCOUNT_LIMITS_UPDATED_METHOD, snapshot),
+    );
     this.auth = new V2Auth(ctx, logger, {
-      routeChanged: () => this.restarts.reroute(),
+      routeChanged: () => {
+        this.accountLimits.reset();
+        return this.restarts.reroute();
+      },
       probed: (kind) => this.guard.probed(kind),
     });
     this.guard = new SubscriptionGuard(this.auth, logger, (sessionId) =>
@@ -343,7 +373,17 @@ class V2Agent implements AgentHandle, SessionConnection {
         providers: {},
         auth,
         // A prompt that comes while Claude works waits in Claude Code's queue.
-        _meta: { claudeCode: { promptQueueing: true }, ..._meta },
+        _meta: {
+          claudeCode: { promptQueueing: true },
+          ..._meta,
+          [ACCOUNT_LIMITS_META_KEY]: {
+            accountLimits: {
+              version: ACCOUNT_LIMITS_VERSION,
+              readMethod: ACCOUNT_LIMITS_READ_METHOD,
+              updatedMethod: ACCOUNT_LIMITS_UPDATED_METHOD,
+            },
+          },
+        },
       },
       authMethods,
     };

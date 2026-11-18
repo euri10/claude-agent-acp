@@ -9,3 +9,17 @@ export {
   type AuthStatusKind,
   type AuthStatusUpdateNotification,
 } from "./auth-status.js";
+export {
+  ACCOUNT_LIMITS_META_KEY,
+  ACCOUNT_LIMITS_READ_METHOD,
+  ACCOUNT_LIMITS_UPDATED_METHOD,
+  ACCOUNT_LIMITS_VERSION,
+  mergeClaudeRateLimitEvent,
+  normalizeClaudeAccountLimits,
+  parseAccountLimitsReadRequest,
+  type AccountLimitBucket,
+  type AccountLimitsCapability,
+  type AccountLimitsReadRequest,
+  type AccountLimitsSnapshot,
+  type AccountLimitWindow,
+} from "./account-limits-extension.js";

@@ -32,6 +32,8 @@
  * {@link SessionOutput}).
  */
 import { randomUUID } from "node:crypto";
+import type { ClaudeAccountLimits } from "../account-limits.js";
+import type { AccountLimitsSnapshot } from "../account-limits-extension.js";
 import {
   RequestError,
   type CompleteElicitationNotification,
@@ -89,6 +91,7 @@ import { SessionTasks, type RequestTarget } from "./tasks.js";
 
 /** What a session needs of its connection. */
 export interface SessionConnection {
+  readonly accountLimits: ClaudeAccountLimits;
   readonly logger: Logger;
   readonly translator: V2UpdateTranslator;
   /** The AIR extensions that the client takes, read at `initialize` (see `air.ts`). */
@@ -341,6 +344,11 @@ export class V2Session implements RequestTarget {
         this.closeTurn();
       },
     });
+  }
+
+  /** Reads connection-wide limits through this session's live query. */
+  readAccountLimits(): Promise<AccountLimitsSnapshot> {
+    return this.connection.accountLimits.read(this.closed ? undefined : this.query);
   }
 
   /**
@@ -951,6 +959,10 @@ export class V2Session implements RequestTarget {
     // A subagent that a task restores from the history is read before the next message.
     if (this.tasks.handle(message)) return this.tasks.restored();
     switch (message.type) {
+      case "rate_limit_event":
+        return this.connection.accountLimits.update(message.rate_limit_info).then(() => {
+          this.report(message);
+        });
       case "conversation_reset":
         this.conversationReset();
         return;

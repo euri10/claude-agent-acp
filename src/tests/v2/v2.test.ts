@@ -23,6 +23,13 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { acpProtocolRouter } from "../../serve.js";
+import {
+  ACCOUNT_LIMITS_META_KEY,
+  ACCOUNT_LIMITS_READ_METHOD,
+  ACCOUNT_LIMITS_UPDATED_METHOD,
+  type AccountLimitsSnapshot,
+} from "../../account-limits-extension.js";
+import { unifiedRateLimit } from "../fixtures/claude-rate-limit.js";
 import { SettingsManager } from "../../settings.js";
 import type { AgentHandle } from "../../v2/agent.js";
 import { StoppedWork } from "../../v2/stopped-work.js";
@@ -153,6 +160,11 @@ vi.mock("@anthropic-ai/claude-agent-sdk", async () => {
         applyFlagSettings: fake.applyFlagSettings,
         rewindFiles: fake.rewindFiles,
         mcpServerStatus: async () => sdk.mcpServers,
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+          subscription_type: null,
+          rate_limits_available: false,
+          rate_limits: null,
+        }),
         ...(sdk.enableRemoteControl ? { enableRemoteControl: sdk.enableRemoteControl } : {}),
         setMcpServers: async () => ({ added: [], removed: [], errors: {} }),
         // A server that needs OAuth: Claude Code returns its authorization URL.
@@ -243,6 +255,7 @@ function v2Client({
   ) => v2.CreateElicitationResponse | Promise<v2.CreateElicitationResponse>;
 } = {}) {
   const sessionUpdates: v2.SessionUpdate[] = [];
+  const limitsUpdates: AccountLimitsSnapshot[] = [];
   const notifications: v2.UpdateSessionNotification[] = [];
   const permissionRequests: v2.RequestPermissionRequest[] = [];
   const elicitations: v2.CreateElicitationRequest[] = [];
@@ -250,6 +263,13 @@ function v2Client({
   const completedElicitations: string[] = [];
   const app = v2
     .client({ name: "v2-test-client" })
+    .onNotification<AccountLimitsSnapshot>(
+      ACCOUNT_LIMITS_UPDATED_METHOD,
+      { parse: (params) => params as AccountLimitsSnapshot },
+      ({ params }) => {
+        limitsUpdates.push(params);
+      },
+    )
     .onNotification(v2.methods.client.session.update, ({ params }) => {
       notifications.push(params);
       sessionUpdates.push(params.update);
@@ -283,6 +303,7 @@ function v2Client({
   };
   return {
     sessionUpdates,
+    limitsUpdates,
     notifications,
     permissionRequests,
     elicitations,
@@ -313,6 +334,42 @@ async function openSession(
   });
   return { response, claude: sdk.processes.at(-1)! };
 }
+
+describe("LouiseLM account limits", () => {
+  it("retains negotiated reads, event fallback and logout invalidation on v2", async () => {
+    const client = v2Client();
+    await client.connect(async (agent) => {
+      const initialization = await agent.request(v2.methods.agent.initialize, {
+        protocolVersion: v2.PROTOCOL_VERSION,
+        info: { name: "v2-test-client", version: "1.0.0" },
+        capabilities: {},
+      });
+      expect(initialization.capabilities?._meta?.[ACCOUNT_LIMITS_META_KEY]).toEqual({
+        accountLimits: {
+          version: 1,
+          readMethod: ACCOUNT_LIMITS_READ_METHOD,
+          updatedMethod: ACCOUNT_LIMITS_UPDATED_METHOD,
+        },
+      });
+      await expect(agent.request(ACCOUNT_LIMITS_READ_METHOD, {})).rejects.toThrow(
+        "requires a live Claude session",
+      );
+      await agent.request(v2.methods.agent.session.new, { cwd });
+      expect(await agent.request(ACCOUNT_LIMITS_READ_METHOD, {})).toEqual({ buckets: [] });
+      sdk.processes.at(-1)!.send({ type: "rate_limit_event", rate_limit_info: unifiedRateLimit });
+      await vi.waitFor(() => expect(client.limitsUpdates).toHaveLength(1));
+      expect(client.limitsUpdates[0].buckets[0].windows).toHaveLength(2);
+      expect(await agent.request(ACCOUNT_LIMITS_READ_METHOD, {})).toEqual(client.limitsUpdates[0]);
+      await agent.request(v2.methods.agent.auth.logout, {});
+      expect(await agent.request(ACCOUNT_LIMITS_READ_METHOD, {})).toEqual({ buckets: [] });
+      await expect(
+        agent.request(ACCOUNT_LIMITS_READ_METHOD, { token: "invalid" }),
+      ).rejects.toMatchObject({
+        code: -32602,
+      });
+    });
+  });
+});
 
 function lifecycle(prompt: SDKUserMessage, state: string) {
   return { type: "command_lifecycle", command_uuid: prompt.uuid, state, uuid: randomUUID() };

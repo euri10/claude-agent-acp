@@ -89,16 +89,30 @@ beforeAll(async () => {
     resetIds();
     const agents: { dispose(): Promise<void> }[] = [];
     const quiet = { log: () => {}, error: () => {} };
-    runs.set(
-      scenario.name,
-      await runScenarioV2(
-        (stream) =>
-          acpProtocolRouter(quiet, (agent) => agents.push(agent), "auto", {
-            onV2Agent: (agent: AgentHandle) => agents.push(agent),
-          }).connect(stream),
-        scenario,
-      ),
+    const recorded = await runScenarioV2(
+      (stream) =>
+        acpProtocolRouter(quiet, (agent) => agents.push(agent), "auto", {
+          onV2Agent: (agent: AgentHandle) => agents.push(agent),
+        }).connect(stream),
+      scenario,
     );
+    const initialization = recorded.normalized.find(
+      (record) => record.kind === "response" && record.method === "initialize",
+    );
+    if (initialization) {
+      const meta = (initialization.payload as { capabilities: { _meta: Record<string, unknown> } })
+        .capabilities._meta;
+      // Assert local advertisements, then compare the remaining upstream contract.
+      expect(meta["io.github.euri10.louiselm"]).toEqual({
+        accountLimits: {
+          version: 1,
+          readMethod: "_io.github.euri10.louiselm/account_limits/read",
+          updatedMethod: "_io.github.euri10.louiselm/account_limits/updated",
+        },
+      });
+      delete meta["io.github.euri10.louiselm"];
+    }
+    runs.set(scenario.name, recorded);
     await Promise.all(agents.map((agent) => agent.dispose()));
   }
 }, 120_000);

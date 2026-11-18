@@ -86,6 +86,17 @@ import {
   Settings,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
+  ACCOUNT_LIMITS_META_KEY,
+  ACCOUNT_LIMITS_READ_METHOD,
+  ACCOUNT_LIMITS_UPDATED_METHOD,
+  ACCOUNT_LIMITS_VERSION,
+  type AccountLimitsCapability,
+  type AccountLimitsReadRequest,
+  type AccountLimitsSnapshot,
+  parseAccountLimitsReadRequest,
+} from "../account-limits-extension.js";
+import { ClaudeAccountLimits } from "../account-limits.js";
+import {
   GOAL_ACTIONS,
   GOAL_CONTROL_METHOD,
   GOAL_EXTENSION_VERSION,
@@ -1654,6 +1665,7 @@ export class ClaudeAcpAgent {
   get currentAuthStatus(): AuthStatus | undefined {
     return this.authStatus.current;
   }
+  private readonly accountLimits: ClaudeAccountLimits;
   /** Grace period before a `session/cancel` forces a wedged prompt loop to
    *  return "cancelled". See {@link DEFAULT_FORCE_CANCEL_GRACE_MS}. Mutable so
    *  tests can shrink it. */
@@ -1714,6 +1726,9 @@ export class ClaudeAcpAgent {
     this.sessions = {};
     this.client = new ChangedMetaClient(client, () => this.toolCallCapabilities.air.client);
     this.logger = logger ?? console;
+    this.accountLimits = new ClaudeAccountLimits(this.logger, (snapshot) =>
+      this.client.extNotification(ACCOUNT_LIMITS_UPDATED_METHOD, snapshot),
+    );
     this.exitPlan = new ExitPlanCoordinator<Session, Turn>({
       currentSession: (id) => this.sessions[id],
       closeQueryStream: (session) => this.closeQueryStream(session),
@@ -1843,6 +1858,13 @@ export class ClaudeAcpAgent {
           // never a status payload. The state itself travels on
           // `_auth/status_update`; there is nothing for a client to ask for.
           authStatus: authStatusCapability(),
+          [ACCOUNT_LIMITS_META_KEY]: {
+            accountLimits: {
+              version: ACCOUNT_LIMITS_VERSION,
+              readMethod: ACCOUNT_LIMITS_READ_METHOD,
+              updatedMethod: ACCOUNT_LIMITS_UPDATED_METHOD,
+            } satisfies AccountLimitsCapability,
+          },
         },
         promptCapabilities: {
           image: true,
@@ -1907,6 +1929,12 @@ export class ClaudeAcpAgent {
         },
       },
     };
+  }
+
+  /** Read account limits through an existing Claude Session without starting one. */
+  async readAccountLimits(_params: AccountLimitsReadRequest): Promise<AccountLimitsSnapshot> {
+    const session = Object.values(this.sessions).find((candidate) => !candidate.queryClosed);
+    return this.accountLimits.read(session?.query);
   }
 
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
@@ -2207,6 +2235,7 @@ export class ClaudeAcpAgent {
       this.authStatus.set(
         gatewayAuthStatus(gatewayRequestToProviderConfig(this.gatewayAuthRequest)?.baseUrl),
       );
+      this.accountLimits.reset();
       return;
     }
     throw RequestError.invalidParams(
@@ -2313,6 +2342,7 @@ export class ClaudeAcpAgent {
     // Any probe already running read the pre-logout world; the bump makes its
     // answer unpublishable so it cannot resurrect the identity being cleared.
     this.authStatus.changed();
+    this.accountLimits.reset();
     // Learned context windows are per-account state too: 1M-context
     // entitlement is gated per org/tier, and an OAuth re-login is invisible to
     // the env-derived provider cache key, so windows learned under the old
@@ -7041,6 +7071,7 @@ export class ClaudeAcpAgent {
           case "rate_limit_event": {
             session.idleCompaction?.noteRateLimit(message.rate_limit_info);
             turnRateLimit = message.rate_limit_info;
+            await this.accountLimits.update(message.rate_limit_info);
             // With partial messages on, the SDK sends this before the turn's
             // first assistant frame, while there is no usage yet to send it with.
             if (lastAssistantTotalUsage === null) {
@@ -10696,6 +10727,7 @@ export class ClaudeAcpAgent {
       }
 
       this.providerConfig = config;
+      this.accountLimits.reset();
       for (const [sessionId] of sessions) {
         await this.serializeConfigurationChange(sessionId, () =>
           this.restartSessionForProvider(sessionId),
@@ -11256,6 +11288,11 @@ export function v1AgentApp(
       GOAL_CONTROL_METHOD,
       { parse: parseGoalRequest },
       (ctx) => agent.goal(ctx.params),
+    )
+    .onRequest<AccountLimitsReadRequest, AccountLimitsSnapshot>(
+      ACCOUNT_LIMITS_READ_METHOD,
+      { parse: parseAccountLimitsReadRequest },
+      (ctx) => agent.readAccountLimits(ctx.params),
     );
   return sessionIndex.onSessionIndexRequests(app, () => agent);
 }
