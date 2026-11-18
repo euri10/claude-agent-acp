@@ -15,6 +15,7 @@ This tool implements an ACP agent by using the official [Claude Agent SDK](https
 - TODO lists
 - Nested subagent transcripts
 - Interactive (and background) terminals
+- Native busy/idle status, including scheduled wakeups, through the opt-in [Session activity extension](session_activity_protocol.md)
 - Custom [Slash commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands)
 - Client MCP servers, including the ones that the client serves over the ACP connection ([MCP-over-ACP](https://agentclientprotocol.com/rfds/mcp-over-acp), `"type": "acp"`)
 - An Ultracode session config option, which turns on Claude Code's dynamic workflows for every task. It appears when dynamic workflows are enabled and the model supports ultracode (any model with `xhigh` effort)

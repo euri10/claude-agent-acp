@@ -109,6 +109,8 @@ export interface SessionConnection {
     signal: AbortSignal,
   ): Promise<CreateElicitationResponse>;
   completeElicitation(params: CompleteElicitationNotification): Promise<void>;
+  /** Forwards negotiated native activity of the root Session. */
+  sessionActivity(sessionId: string, message: SDKMessage): void;
   /** The query of `session` ended on its own: the session cannot go on. */
   ended(session: V2Session): void;
   /** A turn of the session failed for a missing login (`authRequired`). */
@@ -1058,6 +1060,7 @@ export class V2Session implements RequestTarget {
             this.tasks.permissionDenied(message);
             return;
           case "session_state_changed":
+            this.connection.sessionActivity(this.sessionId, message);
             if (message.state === "idle") {
               this.claudeCodeIdle();
               this.reports.idle();

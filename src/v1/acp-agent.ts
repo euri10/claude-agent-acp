@@ -59,6 +59,7 @@ import {
   ToolCallContent,
 } from "@agentclientprotocol/sdk/unstable";
 import type { StopReason, TurnEvents, TurnOutcome } from "./turn-events.js";
+import { SESSION_ACTIVITY_META_KEY, sessionActivityUpdate } from "../session-activity.js";
 import {
   AgentInfo,
   CanUseTool,
@@ -1853,6 +1854,7 @@ export class ClaudeAcpAgent {
           claudeCode: {
             promptQueueing: true,
           },
+          "io.github.euri10.louiselm.sessionActivity": { version: 1 },
           // Capability marker for the `authStatus` extension: presence means
           // "this agent pushes its identity" and the object stays empty — it is
           // never a status payload. The state itself travels on
@@ -4907,6 +4909,12 @@ export class ClaudeAcpAgent {
                 break;
               }
               case "session_state_changed": {
+                const activity = sessionActivityUpdate(
+                  this.clientCapabilities?._meta?.[SESSION_ACTIVITY_META_KEY],
+                  params.sessionId,
+                  message,
+                );
+                if (activity) await sendUpdate({ sessionId: params.sessionId, update: activity });
                 const previousState = session.lastSessionState;
                 session.lastSessionState = message.state;
                 sessionIndex.noteSessionState(session, previousState, message.state);

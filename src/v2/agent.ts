@@ -98,6 +98,8 @@ import {
 } from "./setup.js";
 import type { SubagentReplay } from "./subagent-replay.js";
 import { SubscriptionGuard } from "./subscription-guard.js";
+import { SESSION_ACTIVITY_META_KEY, sessionActivityUpdate } from "../session-activity.js";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { restrictedChild } from "./tasks.js";
 
 /** The sessions per `session/list` page. */
@@ -293,6 +295,15 @@ class V2Agent implements AgentHandle, SessionConnection {
     );
   }
 
+  sessionActivity(sessionId: string, message: SDKMessage): void {
+    const update = sessionActivityUpdate(
+      this.clientCapabilities?._meta?.[SESSION_ACTIVITY_META_KEY],
+      sessionId,
+      message,
+    );
+    if (update) this.send({ sessionId, update });
+  }
+
   requestPermission(
     request: v2.RequestPermissionRequest,
     signal: AbortSignal,
@@ -361,7 +372,8 @@ class V2Agent implements AgentHandle, SessionConnection {
       url: request.capabilities?.elicitation?.url != null,
     };
     this.air = airSupport(request.capabilities);
-    const { authMethods, auth, _meta } = this.auth.initialize(request.capabilities);
+    const { authMethods, auth, _meta: authMeta } = this.auth.initialize(request.capabilities);
+    const _meta = { ...authMeta, [SESSION_ACTIVITY_META_KEY]: { version: 1 } };
     const airMeta = airInitializeMeta(this.air);
     return {
       ...(airMeta ? { _meta: airMeta } : {}),

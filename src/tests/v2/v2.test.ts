@@ -390,6 +390,58 @@ function sessionState(state: "idle" | "running" | "requires_action") {
   return { type: "system", subtype: "session_state_changed", state, uuid: randomUUID() };
 }
 
+describe("LouiseLM Session activity", () => {
+  it.each([undefined, { version: 2 }, { version: 1 }])(
+    "forwards native activity without a prompt only for a compatible subscriber: %j",
+    async (capability) => {
+      const key = "io.github.euri10.louiselm.sessionActivity";
+      const client = v2Client();
+      await client.connect(async (agent) => {
+        const { response, claude } = await openSession(agent, {
+          _meta: capability ? { [key]: capability } : {},
+        });
+        // Retain the captured native wakeup ordering cited in v1/session-activity.test.ts.
+        const states = ["running", "idle", "running", "requires_action", "idle"] as const;
+        for (const state of states) {
+          claude.send({ ...sessionState(state), session_id: response.sessionId });
+        }
+        claude.send({ ...sessionState("idle"), session_id: "other-session" });
+        claude.send({
+          ...sessionState("idle"),
+          state: "future-state",
+          session_id: response.sessionId,
+        });
+        claude.send({
+          type: "system",
+          subtype: "local_command_output",
+          content: "activity-end",
+          uuid: randomUUID(),
+        });
+        await vi.waitFor(() =>
+          expect(client.sessionUpdates).toContainEqual(
+            expect.objectContaining({
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "activity-end" },
+            }),
+          ),
+        );
+        const activity = client.sessionUpdates.flatMap((update) => {
+          const meta = update._meta;
+          return update.sessionUpdate === "session_info_update" &&
+            meta &&
+            typeof meta === "object" &&
+            key in meta
+            ? [meta[key]]
+            : [];
+        });
+        expect(activity).toEqual(
+          capability?.version === 1 ? states.map((state) => ({ version: 1, state })) : [],
+        );
+      });
+    },
+  );
+});
+
 /**
  * The first output of a turn: the `message_start` of its model's stream. It
  * opens a turn that no prompt started, such as after a background task ends.

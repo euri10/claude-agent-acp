@@ -110,7 +110,9 @@ beforeAll(async () => {
           updatedMethod: "_io.github.euri10.louiselm/account_limits/updated",
         },
       });
+      expect(meta["io.github.euri10.louiselm.sessionActivity"]).toEqual({ version: 1 });
       delete meta["io.github.euri10.louiselm"];
+      delete meta["io.github.euri10.louiselm.sessionActivity"];
     }
     runs.set(scenario.name, recorded);
     await Promise.all(agents.map((agent) => agent.dispose()));
